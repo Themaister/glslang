@@ -3,12 +3,10 @@
 # Arguments:
 #  1- TargetDirectory, where to write test results and intermediary files
 #  2- Path to glslang
-#  3- Path to spirv-remap
 
 TARGETDIR=${1:-localResults}
 BASEDIR=baseResults
 EXE=${2:-../build/install/bin/glslang}
-REMAPEXE=${3:-../build/install/bin/spirv-remap}
 HASERROR=0
 mkdir -p "$TARGETDIR"
 
@@ -189,6 +187,12 @@ run -D -Od -e main -H -Od ../Test/hlsl.include.vert > "$TARGETDIR/hlsl.include.v
 diff -b $BASEDIR/hlsl.include.vert.out "$TARGETDIR/hlsl.include.vert.out" || HASERROR=1
 run -D -Od -e main -H -Od hlsl.includeNegative.vert > "$TARGETDIR/hlsl.includeNegative.vert.out"
 diff -b $BASEDIR/hlsl.includeNegative.vert.out "$TARGETDIR/hlsl.includeNegative.vert.out" || HASERROR=1
+run -D -Od -e main -H -Od hlsl.include.system.vert -Iinc1 -Iinc1/path1 -Iinc1/path2 > "$TARGETDIR/hlsl.include.system.vert.out"
+diff -b $BASEDIR/hlsl.include.system.vert.out "$TARGETDIR/hlsl.include.system.vert.out" || HASERROR=1
+run -D -Od -e main -H -Od hlsl.include.system.unresolved.vert > "$TARGETDIR/hlsl.include.system.unresolved.vert.out"
+diff -b $BASEDIR/hlsl.include.system.unresolved.vert.out "$TARGETDIR/hlsl.include.system.unresolved.vert.out" || HASERROR=1
+run -l -i include.system.vert -Iinc2 > "$TARGETDIR/include.system.vert.out"
+diff -b $BASEDIR/include.system.vert.out "$TARGETDIR/include.system.vert.out" || HASERROR=1
 run -l -i include.vert > "$TARGETDIR/include.vert.out"
 diff -b $BASEDIR/include.vert.out "$TARGETDIR/include.vert.out" || HASERROR=1
 run -D -Od -e main -H -Od -Iinc1/path1 -Iinc1/path2 hlsl.dashI.vert > "$TARGETDIR/hlsl.dashI.vert.out"
@@ -245,15 +249,6 @@ run -H -e foo --source-entrypoint bar glsl.entryPointRename.vert > "$TARGETDIR/g
 diff -b $BASEDIR/glsl.entryPointRename.vert.bad.out "$TARGETDIR/glsl.entryPointRename.vert.bad.out" || HASERROR=1
 run -H -e foo --source-entrypoint main glsl.entryPointRename2.vert > "$TARGETDIR/glsl.entryPointRename2.vert.out"
 diff -b $BASEDIR/glsl.entryPointRename2.vert.out "$TARGETDIR/glsl.entryPointRename2.vert.out" || HASERROR=1
-
-#
-# Testing remapper error handling
-#
-echo "Testing remapper error handling"
-"$REMAPEXE" --do-everything -i remap.invalid-spirv-1.spv -o "$TARGETDIR" > "$TARGETDIR/remap.invalid-spirv-1.out" && HASERROR=1
-diff -b $BASEDIR/remap.invalid-spirv-1.out "$TARGETDIR/remap.invalid-spirv-1.out" || HASERROR=1
-"$REMAPEXE" --do-everything -i remap.invalid-spirv-2.spv -o "$TARGETDIR" > "$TARGETDIR/remap.invalid-spirv-2.out" && HASERROR=1
-diff -b $BASEDIR/remap.invalid-spirv-2.out "$TARGETDIR/remap.invalid-spirv-2.out" || HASERROR=1
 
 #
 # Testing position Y inversion
