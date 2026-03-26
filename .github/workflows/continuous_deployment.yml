@@ -41,8 +41,8 @@ jobs:
                 compiler: [{cc: clang, cxx: clang++}, {cc: gcc, cxx: g++}]
                 cmake_build_type: [Debug, Release]
         steps:
-            - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-            - uses: lukka/get-cmake@57c20a23a6cac5b90f31864439996e5b206df9dc # v4.0.1
+            - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+            - uses: lukka/get-cmake@f3273e0bcecf2f2c0d3430de21bf02ab2752c47d # v4.1.0
             - run: ./update_glslang_sources.py
             - name: Build
               env:
@@ -97,8 +97,8 @@ jobs:
                 compiler: [{cc: clang, cxx: clang++}]
                 cmake_build_type: [Debug, Release]
         steps:
-            - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-            - uses: lukka/get-cmake@57c20a23a6cac5b90f31864439996e5b206df9dc # v4.0.1
+            - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+            - uses: lukka/get-cmake@f3273e0bcecf2f2c0d3430de21bf02ab2752c47d # v4.1.0
             - run: ./update_glslang_sources.py
             - name: Build
               env:
@@ -147,15 +147,15 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                os: [{genus: windows-2019, family: windows}]
+                os: [{genus: windows-2022, family: windows}]
                 cmake_build_type: [Debug, Release]
         steps:
-            - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-            - uses: lukka/get-cmake@57c20a23a6cac5b90f31864439996e5b206df9dc # v4.0.1
+            - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+            - uses: lukka/get-cmake@f3273e0bcecf2f2c0d3430de21bf02ab2752c47d # v4.1.0
             - run: python update_glslang_sources.py
             - name: Build
               run: |
-                  cmake -S. -Bbuild -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX="$PWD/build/install"
+                  cmake -S. -Bbuild -G "Visual Studio 17 2022" -A x64 -DCMAKE_INSTALL_PREFIX="$PWD/build/install"
                   cmake --build build --config ${{matrix.cmake_build_type}} --target install
             - name: Test
               run: |
