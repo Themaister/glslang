@@ -105,6 +105,7 @@ public:
     virtual const TFunction* getAsFunction() const { return nullptr; }
     virtual TVariable* getAsVariable() { return nullptr; }
     virtual const TVariable* getAsVariable() const { return nullptr; }
+    virtual TAnonMember* getAsAnonMember() { return nullptr; }
     virtual const TAnonMember* getAsAnonMember() const { return nullptr; }
     virtual const TType& getType() const = 0;
     virtual TType& getWritableType() = 0;
@@ -195,11 +196,17 @@ public:
             (*memberExtensions)[member].push_back(exts[e]);
     }
     virtual bool hasMemberExtensions() const { return memberExtensions != nullptr; }
-    virtual int getNumMemberExtensions(int member) const 
+    virtual int getNumMemberExtensions(int member) const
     {
         return memberExtensions == nullptr ? 0 : (int)(*memberExtensions)[member].size();
     }
     virtual const char** getMemberExtensions(int member) const { return (*memberExtensions)[member].data(); }
+    // Keep the per-member lists aligned with the members when one is erased.
+    virtual void eraseMemberExtensions(int member)
+    {
+        if (memberExtensions != nullptr)
+            memberExtensions->erase(memberExtensions->begin() + member);
+    }
 
     virtual void dump(TInfoSink& infoSink, bool complete = false) const;
 
@@ -255,13 +262,14 @@ public:
     explicit TFunction(TOperator o) :
         TSymbol(nullptr),
         op(o),
-        defined(false), prototyped(false), implicitThis(false), illegalImplicitThis(false), variadic(false), defaultParamCount(0) { }
+        defined(false), prototyped(false), implicitThis(false), illegalImplicitThis(false), variadic(false), defaultParamCount(0),
+        functionControl(EfcNone) { }
     TFunction(const TString *name, const TType& retType, TOperator tOp = EOpNull) :
         TSymbol(name),
         mangledName(*name + '('),
         op(tOp),
         defined(false), prototyped(false), implicitThis(false), illegalImplicitThis(false), variadic(false), defaultParamCount(0),
-        linkType(ELinkNone)
+        functionControl(EfcNone), linkType(ELinkNone)
     {
         returnType.shallowCopy(retType);
         declaredBuiltIn = retType.getQualifier().builtIn;
@@ -351,6 +359,13 @@ public:
 
     void setExport() { linkType = ELinkExport; }
     TLinkType getLinkType() const { return linkType; }
+    void addFunctionControl(unsigned int fc) { functionControl |= fc; }
+    void setFunctionControl(unsigned int fc) { functionControl = fc; }
+    unsigned int getFunctionControl() const { return functionControl; }
+    bool hasIncompatibleFunctionControl() const
+    {
+        return (functionControl & EfcInline) != 0 && (functionControl & EfcDontInline) != 0;
+    }
 
 protected:
     explicit TFunction(const TFunction&);
@@ -374,6 +389,7 @@ protected:
     int  defaultParamCount;
 
     TSpirvInstruction spirvInst; // SPIR-V instruction qualifiers
+    unsigned int functionControl;
     TLinkType linkType;
 };
 
@@ -389,7 +405,9 @@ public:
     virtual TAnonMember* clone() const override;
     virtual ~TAnonMember() { }
 
+    virtual TAnonMember* getAsAnonMember() override { return this; }
     virtual const TAnonMember* getAsAnonMember() const override { return this; }
+    virtual TVariable& getAnonContainer() { return anonContainer; }
     virtual const TVariable& getAnonContainer() const { return anonContainer; }
     virtual unsigned int getMemberNumber() const { return memberNumber; }
 

@@ -467,7 +467,7 @@ const std::unordered_set<const char*, str_hash, str_eq> ReservedSet {
     "using",
     "virtual",
 };
-std::unordered_map<const char*, glslang::TBuiltInVariable, str_hash, str_eq> SemanticMap { 
+std::unordered_map<const char*, glslang::TBuiltInVariable, str_hash, str_eq> SemanticMap {
 
     // in DX9, all outputs had to have a semantic associated with them, that was either consumed
     // by the system or was a specific register assignment
@@ -1030,7 +1030,7 @@ EHlslTokenClass HlslScanContext::identifierOrType()
 EHlslTokenClass HlslScanContext::reservedWord()
 {
     if (! parseContext.symbolTable.atBuiltInLevel())
-        parseContext.error(loc, "Reserved word.", tokenText, "", "");
+        parseContext.error(loc, "Reserved word.", tokenText, "");
 
     return EHTokNone;
 }

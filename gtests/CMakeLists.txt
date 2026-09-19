@@ -49,6 +49,7 @@ if(GLSLANG_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/BuiltInResource.FromFile.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/Common.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/Config.FromFile.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/Discard.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/HexFloat.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/Hlsl.FromFile.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/Link.FromFile.cpp
@@ -58,6 +59,8 @@ if(GLSLANG_TESTS)
             ${CMAKE_CURRENT_SOURCE_DIR}/Spv.FromFile.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/StructName.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/SpvPatternTest.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/SpvDebugInfoTest.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/InvertY.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/VkRelaxed.FromFile.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/GlslMapIO.FromFile.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/UboUnsizedArray.cpp)

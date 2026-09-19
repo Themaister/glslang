@@ -451,7 +451,7 @@ void TIntermediate::optimizeStageIO(TInfoSink&, TIntermediate& unit)
 
         // determine if the input/output pair should be demoted
         // do the faster (and more likely) loose-loose check first
-        if (std::none_of(unitLiveInputs.begin(), unitLiveInputs.end(), isMatchingInput) && 
+        if (std::none_of(unitLiveInputs.begin(), unitLiveInputs.end(), isMatchingInput) &&
             std::none_of(unitAllInputs.begin(), unitAllInputs.end(), isMatchingInputBlockMember)) {
             // demote any input matching the output
             auto demoteMatchingInputs = [output](TIntermNode* input) {
@@ -2335,7 +2335,7 @@ unsigned int TIntermediate::computeTypeXfbSize(const TType& type, bool& contains
         // TODO: perf: this can be flattened by using getCumulativeArraySize(), and a deref that discards all arrayness
         // Unsized array use to xfb should be a compile error.
         TType elementType(type, 0);
-        return type.getOuterArraySize() * computeTypeXfbSize(elementType, contains64BitType, contains16BitType, contains16BitType);
+        return type.getOuterArraySize() * computeTypeXfbSize(elementType, contains64BitType, contains32BitType, contains16BitType);
     }
 
     if (type.isStruct()) {
@@ -2419,6 +2419,8 @@ int TIntermediate::getBaseAlignmentScalar(const TType& type, int& size)
     case EbtBFloat16: size = 2; return 2;
     case EbtFloatE5M2:
     case EbtFloatE4M3:
+    case EbtFloatUE8M0:
+    case EbtFloatMXINT8:
     case EbtInt8:
     case EbtUint8:   size = 1; return 1;
     case EbtInt16:
@@ -2752,6 +2754,8 @@ int TIntermediate::getBlockSize(const TType& blockType)
 {
     const TTypeList& memberList = *blockType.getStruct();
     int lastIndex = (int)memberList.size() - 1;
+    if (lastIndex < 0)
+        return 0;
     int lastOffset = getOffset(blockType, lastIndex);
 
     int lastMemberSize;

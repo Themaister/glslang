@@ -51,6 +51,16 @@
 
 namespace glslang {
 
+static bool isLayoutSetOutOfRange(int value, bool relaxSetBindingLimits)
+{
+    return value < 0 || (!relaxSetBindingLimits && value >= static_cast<int>(TQualifier::layoutSetEnd));
+}
+
+static bool isLayoutBindingOutOfRange(int value, bool relaxSetBindingLimits)
+{
+    return value < 0 || (!relaxSetBindingLimits && value >= static_cast<int>(TQualifier::layoutBindingEnd));
+}
+
 HlslParseContext::HlslParseContext(TSymbolTable& symbolTable, TIntermediate& interm, bool parsingBuiltins,
                                    int version, EProfile profile, const SpvVersion& spvVersion, EShLanguage language,
                                    TInfoSink& infoSink,
@@ -581,8 +591,8 @@ bool HlslParseContext::parseMatrixSwizzleSelector(const TSourceLoc& loc, const T
                 error(loc, "matrix component swizzle has too many components", compString.c_str(), "");
                 return false;
             }
-            if (c > compString.size() - 3 ||
-                    ((compString[c+1] == 'm' || compString[c+1] == 'M') && c > compString.size() - 4)) {
+            if (c + 3 > compString.size() ||
+                    ((compString[c+1] == 'm' || compString[c+1] == 'M') && c + 4 > compString.size())) {
                 error(loc, "matrix component swizzle missing", compString.c_str(), "");
                 return false;
             }
@@ -934,7 +944,7 @@ TIntermTyped* HlslParseContext::handleDotDereference(const TSourceLoc& loc, TInt
     variableCheck(base);
 
     if (base->isArray()) {
-        error(loc, "cannot apply to an array:", ".", field.c_str());
+        error(loc, "cannot apply to an array:", ".", "%s", field.c_str());
         return base;
     }
 
@@ -953,7 +963,7 @@ TIntermTyped* HlslParseContext::handleDotDereference(const TSourceLoc& loc, TInt
                       base->getType().getCompleteString().c_str(), "");
             else
                 error(loc, "unexpected operator on texture type:", field.c_str(),
-                      base->getType().getCompleteString().c_str());
+                      "%s", base->getType().getCompleteString().c_str());
         }
     } else if (base->isVector() || base->isScalar()) {
         TSwizzleSelectors<TVectorSelector> selectors;
@@ -1055,7 +1065,7 @@ TIntermTyped* HlslParseContext::handleDotDereference(const TSourceLoc& loc, TInt
         } else
             error(loc, "no such field in structure", field.c_str(), "");
     } else
-        error(loc, "does not apply to this type:", field.c_str(), base->getType().getCompleteString().c_str());
+        error(loc, "does not apply to this type:", field.c_str(), "%s", base->getType().getCompleteString().c_str());
 
     return result;
 }
@@ -1253,7 +1263,7 @@ int HlslParseContext::addFlattenedMember(const TVariable& variable, const TType&
         TVariable* memberVariable = makeInternalVariable(memberName, type);
         mergeQualifiers(memberVariable->getWritableType().getQualifier(), variable.getType().getQualifier());
 
-        if (flattenData.nextBinding != TQualifier::layoutBindingEnd)
+        if (flattenData.nextBinding != TQualifier::layoutNotSet)
             memberVariable->getWritableType().getQualifier().layoutBinding = flattenData.nextBinding++;
 
         if (memberVariable->getType().isBuiltIn()) {
@@ -1755,11 +1765,17 @@ void HlslParseContext::handleEntryPointAttributes(const TSourceLoc& loc, const T
         case EatNumThreads:
         {
             const TIntermSequence& sequence = it->args->getSequence();
+            // numthreads has three dimensions (x, y, z); localSize is sized to match,
+            // so reject extra arguments rather than indexing past it.
+            if (sequence.size() > 3) {
+                error(loc, "expected at most three arguments", "numthreads", "");
+                break;
+            }
             for (int lid = 0; lid < int(sequence.size()); ++lid)
                 intermediate.setLocalSize(lid, sequence[lid]->getAsConstantUnion()->getConstArray()[0].getIConst());
             break;
         }
-        case EatInstance: 
+        case EatInstance:
         {
             int invocations;
 
@@ -2303,7 +2319,7 @@ void HlslParseContext::handleFunctionBody(const TSourceLoc& loc, TFunction& func
         popImplicitThis();
 
     if (function.getType().getBasicType() != EbtVoid && ! functionReturnsValue)
-        error(loc, "function does not return a value:", "", function.getName().c_str());
+        error(loc, "function does not return a value:", "", "%s", function.getName().c_str());
 }
 
 // AST I/O is done through shader globals declared in the 'in' or 'out'
@@ -3518,10 +3534,53 @@ void HlslParseContext::decomposeStructBufferMethods(const TSourceLoc& loc, TInte
     if (argArray == nullptr)
         return;  // It might not be a struct buffer method.
 
+    // These builtins resolve by name against a zero-parameter prototype, so normal
+    // overload resolution never checks the argument count. Validate it here before
+    // indexing the argument sequence, otherwise a call with too few arguments reads
+    // past the end of the aggregate (or dereferences a null aggregate for a bare
+    // buffer object with no arguments).
+    const int argCount = argAggregate ? (int)argAggregate->getSequence().size() : 1;
+    int minArgCount = 1; // the buffer object at index 0
+    switch (op) {
+    case EOpMethodLoad:
+    case EOpMethodLoad2:
+    case EOpMethodLoad3:
+    case EOpMethodLoad4:
+    case EOpMethodGetDimensions:
+    case EOpMethodAppend:
+    case EOpInterlockedAdd:
+    case EOpInterlockedAnd:
+    case EOpInterlockedExchange:
+    case EOpInterlockedMax:
+    case EOpInterlockedMin:
+    case EOpInterlockedOr:
+    case EOpInterlockedXor:
+    case EOpInterlockedCompareExchange:
+    case EOpInterlockedCompareStore:
+        minArgCount = 2;
+        break;
+    case EOpMethodStore:
+    case EOpMethodStore2:
+    case EOpMethodStore3:
+    case EOpMethodStore4:
+        minArgCount = 3;
+        break;
+    default:
+        break;
+    }
+    if (argCount < minArgCount) {
+        error(loc, "too few arguments to buffer method", "", "");
+        return;
+    }
+
     switch (op) {
     case EOpMethodLoad:
         {
             TIntermTyped* argIndex = makeIntegerIndex(argAggregate->getSequence()[1]->getAsTyped());  // index
+            if (argIndex == nullptr) {
+                error(loc, "invalid index for Load", "", "");
+                return;
+            }
 
             const TType& bufferType = bufferObj->getType();
 
@@ -3554,6 +3613,10 @@ void HlslParseContext::decomposeStructBufferMethods(const TSourceLoc& loc, TInte
     case EOpMethodLoad4:
         {
             TIntermTyped* argIndex = makeIntegerIndex(argAggregate->getSequence()[1]->getAsTyped());  // index
+            if (argIndex == nullptr) {
+                error(loc, "invalid index for vector Load", "", "");
+                return;
+            }
 
             TOperator constructOp = EOpNull;
             int size = 0;
@@ -3621,6 +3684,10 @@ void HlslParseContext::decomposeStructBufferMethods(const TSourceLoc& loc, TInte
     case EOpMethodStore4:
         {
             TIntermTyped* argIndex = makeIntegerIndex(argAggregate->getSequence()[1]->getAsTyped());  // index
+            if (argIndex == nullptr) {
+                error(loc, "invalid index for Store", "", "");
+                return;
+            }
             TIntermTyped* argValue = argAggregate->getSequence()[2]->getAsTyped();  // value
 
             // Index into the array to find the item being loaded.
@@ -3740,6 +3807,10 @@ void HlslParseContext::decomposeStructBufferMethods(const TSourceLoc& loc, TInte
             TIntermSequence& sequence = argAggregate->getSequence();
 
             TIntermTyped* argIndex     = makeIntegerIndex(sequence[1]->getAsTyped());  // index
+            if (argIndex == nullptr) {
+                error(loc, "invalid destination address for interlocked operation", "", "");
+                return;
+            }
             argIndex = intermediate.addBinaryNode(EOpRightShift, argIndex, intermediate.addConstantUnion(2, loc, true),
                                                   loc, TType(EbtInt));
 
@@ -5566,6 +5637,7 @@ TIntermTyped* HlslParseContext::handleFunctionCall(const TSourceLoc& loc, TFunct
                 callerName = fnCandidate->getMangledName();
             else {
                 // get the explicit (full) name of the function
+                assert(currentTypePrefix.size() >= size_t(thisDepth));
                 callerName = currentTypePrefix[currentTypePrefix.size() - thisDepth];
                 callerName += fnCandidate->getMangledName();
                 // insert the implicit calling argument
@@ -7300,14 +7372,14 @@ void HlslParseContext::setLayoutQualifier(const TSourceLoc& loc, TQualifier& qua
             qualifier.layoutLocation = value;
         return;
     } else if (id == "set") {
-        if ((unsigned int)value >= TQualifier::layoutSetEnd)
-            error(loc, "set is too large", id.c_str(), "");
+        if (isLayoutSetOutOfRange(value, relaxSetBindingLimits()))
+            error(loc, "set is out of range", id.c_str(), "");
         else
             qualifier.layoutSet = value;
         return;
     } else if (id == "binding") {
-        if ((unsigned int)value >= TQualifier::layoutBindingEnd)
-            error(loc, "binding is too large", id.c_str(), "");
+        if (isLayoutBindingOutOfRange(value, relaxSetBindingLimits()))
+            error(loc, "binding is out of range", id.c_str(), "");
         else
             qualifier.layoutBinding = value;
         return;
@@ -7518,7 +7590,7 @@ void HlslParseContext::mergeObjectLayoutQualifiers(TQualifier& dst, const TQuali
 
         if (src.hasSet())
             dst.layoutSet = src.layoutSet;
-        if (src.layoutBinding != TQualifier::layoutBindingEnd)
+        if (src.hasBinding())
             dst.layoutBinding = src.layoutBinding;
 
         if (src.hasXfbStride())
@@ -7844,7 +7916,7 @@ void HlslParseContext::declareTypedef(const TSourceLoc& loc, const TString& iden
 {
     TVariable* typeSymbol = new TVariable(&identifier, parseType, true);
     if (! symbolTable.insert(*typeSymbol))
-        error(loc, "name already defined", "typedef", identifier.c_str());
+        error(loc, "name already defined", "typedef", "%s", identifier.c_str());
 }
 
 // Do everything necessary to handle a struct declaration, including
@@ -8036,7 +8108,7 @@ TIntermNode* HlslParseContext::declareVariable(const TSourceLoc& loc, const TStr
         if (symbol == nullptr)
             symbol = declareNonArray(loc, identifier, type, !flattenVar);
         else if (type != symbol->getType())
-            error(loc, "cannot change the type of", "redeclaration", symbol->getName().c_str());
+            error(loc, "cannot change the type of", "redeclaration", "%s", symbol->getName().c_str());
     }
 
     if (symbol == nullptr)
@@ -8340,7 +8412,7 @@ TIntermTyped* HlslParseContext::convertInitializerList(const TSourceLoc& loc, co
             lengthenList(loc, initList->getSequence(), type.getMatrixCols(), scalarInit);
 
             if (type.getMatrixCols() != (int)initList->getSequence().size()) {
-                error(loc, "wrong number of matrix columns:", "initializer list", type.getCompleteString().c_str());
+                error(loc, "wrong number of matrix columns:", "initializer list", "%s", type.getCompleteString().c_str());
                 return nullptr;
             }
             TType vectorType(type, 0); // dereferenced type
@@ -8358,7 +8430,7 @@ TIntermTyped* HlslParseContext::convertInitializerList(const TSourceLoc& loc, co
         // error check; we're at bottom, so work is finished below
         if (type.getVectorSize() != (int)initList->getSequence().size()) {
             error(loc, "wrong vector size (or rows in a matrix column):", "initializer list",
-                  type.getCompleteString().c_str());
+                  "%s", type.getCompleteString().c_str());
             return nullptr;
         }
     } else if (type.isScalar()) {
@@ -8366,11 +8438,11 @@ TIntermTyped* HlslParseContext::convertInitializerList(const TSourceLoc& loc, co
         lengthenList(loc, initList->getSequence(), 1, scalarInit);
 
         if ((int)initList->getSequence().size() != 1) {
-            error(loc, "scalar expected one element:", "initializer list", type.getCompleteString().c_str());
+            error(loc, "scalar expected one element:", "initializer list", "%s", type.getCompleteString().c_str());
             return nullptr;
         }
     } else {
-        error(loc, "unexpected initializer-list type:", "initializer list", type.getCompleteString().c_str());
+        error(loc, "unexpected initializer-list type:", "initializer list", "%s", type.getCompleteString().c_str());
         return nullptr;
     }
 
@@ -9290,7 +9362,7 @@ void HlslParseContext::updateStandaloneQualifierDefaults(const TSourceLoc& loc, 
             handleOutputGeometry(loc, publicType.shaderQualifiers.geometry);
         } else
             error(loc, "cannot apply to:", TQualifier::getGeometryString(publicType.shaderQualifiers.geometry),
-                  GetStorageQualifierString(publicType.qualifier.storage));
+                  "%s", GetStorageQualifierString(publicType.qualifier.storage));
     }
     if (publicType.shaderQualifiers.spacing != EvsNone)
         intermediate.setVertexSpacing(publicType.shaderQualifiers.spacing);

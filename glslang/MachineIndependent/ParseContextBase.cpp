@@ -180,7 +180,7 @@ bool TParseContextBase::lValueErrorCheck(const TSourceLoc& loc, const char* op, 
     }
 
     if (message == nullptr && binaryNode == nullptr && symNode == nullptr) {
-        error(loc, " l-value required", op, "", "");
+        error(loc, " l-value required", op, "");
 
         return true;
     }
@@ -201,7 +201,7 @@ bool TParseContextBase::lValueErrorCheck(const TSourceLoc& loc, const char* op, 
             default:
                 break;
             }
-            error(loc, " l-value required", op, "", "");
+            error(loc, " l-value required", op, "");
 
             return true;
         }
@@ -240,14 +240,14 @@ void TParseContextBase::rValueErrorCheck(const TSourceLoc& loc, const char* op, 
         const TIntermTyped* leftMostTypeNode = TIntermediate::traverseLValueBase(node, true);
 
         if (symNode != nullptr)
-            error(loc, "can't read from writeonly object: ", op, symNode->getName().c_str());
+            error(loc, "can't read from writeonly object: ", op, "%s", symNode->getName().c_str());
         else if (binaryNode &&
                 (binaryNode->getAsOperator()->getOp() == EOpIndexDirectStruct ||
                  binaryNode->getAsOperator()->getOp() == EOpIndexDirect))
             if(IsAnonymous(leftMostTypeNode->getAsSymbolNode()->getName()))
-                error(loc, "can't read from writeonly object: ", op, leftMostTypeNode->getAsSymbolNode()->getAccessName().c_str());
+                error(loc, "can't read from writeonly object: ", op, "%s", leftMostTypeNode->getAsSymbolNode()->getAccessName().c_str());
             else
-                error(loc, "can't read from writeonly object: ", op, leftMostTypeNode->getAsSymbolNode()->getName().c_str());
+                error(loc, "can't read from writeonly object: ", op, "%s", leftMostTypeNode->getAsSymbolNode()->getName().c_str());
         else
             error(loc, "can't read from writeonly object: ", op, "");
 
@@ -280,6 +280,42 @@ void TParseContextBase::trackLinkage(TSymbol& symbol)
         linkageSymbols.push_back(&symbol);
 }
 
+// These add a member to a block. Other member extensions, like GL_EXT_geometry_point_size,
+// only allow writing a member that is in the block either way, so they must be left alone.
+static bool extensionAddsMember(const char* extension)
+{
+    return strcmp(extension, E_GL_EXT_clip_cull_distance) == 0 ||
+           strcmp(extension, E_GL_ARB_cull_distance) == 0;
+}
+
+// Hide block members added by an extension this compile did not turn on. Downstream reads
+// the type, not the symbol table's per-member extension lists, so the type has to lose them.
+void TParseContextBase::hideUnavailableMembers(TSymbol& symbol)
+{
+    TVariable* block = symbol.getAsVariable();
+    if (block == nullptr) {
+        TAnonMember* anon = symbol.getAsAnonMember();
+        if (anon == nullptr)
+            return;
+        block = &anon->getAnonContainer();
+    }
+    if (block->isReadOnly() || ! block->hasMemberExtensions())
+        return;
+
+    TTypeList& members = *block->getWritableType().getWritableStruct();
+    for (int member = 0; member < (int)members.size(); ++member) {
+        const int numExtensions = block->getNumMemberExtensions(member);
+        if (numExtensions == 0)
+            continue;
+        const char* const* extensions = block->getMemberExtensions(member);
+        bool addsMember = true;
+        for (int e = 0; e < numExtensions; ++e)
+            addsMember = addsMember && extensionAddsMember(extensions[e]);
+        if (addsMember && ! extensionsTurnedOn(numExtensions, extensions))
+            members[member].type->hideMember();
+    }
+}
+
 // Ensure index is in bounds, correct if necessary.
 // Give an error if not.
 void TParseContextBase::checkIndex(const TSourceLoc& loc, const TType& type, int64_t& index)
@@ -290,27 +326,32 @@ void TParseContextBase::checkIndex(const TSourceLoc& loc, const TType& type, int
                type.getArraySizes()->getOuterNode()->getAsSymbolNode() == nullptr; };
 
     if (index < 0) {
-        error(loc, "", "[", "index out of range '%d'", index);
+        error(loc, "", "[", "index out of range '%lld'", (long long)index);
         index = 0;
     } else if (type.isArray()) {
         if (type.isSizedArray() && !sizeIsSpecializationExpression() &&
             index >= type.getOuterArraySize()) {
-            error(loc, "", "[", "array index out of range '%d'", index);
+            error(loc, "", "[", "array index out of range '%lld'", (long long)index);
             index = type.getOuterArraySize() - 1;
         }
     } else if (type.isVector()) {
         if (index >= type.getVectorSize()) {
-            error(loc, "", "[", "vector index out of range '%d'", index);
+            error(loc, "", "[", "vector index out of range '%lld'", (long long)index);
             index = type.getVectorSize() - 1;
         }
     } else if (type.isMatrix()) {
         if (index >= type.getMatrixCols()) {
-            error(loc, "", "[", "matrix index out of range '%d'", index);
+            error(loc, "", "[", "matrix index out of range '%lld'", (long long)index);
             index = type.getMatrixCols() - 1;
         }
     } else if (type.isCoopVecNV()) {
         if (index >= type.computeNumComponents()) {
-            error(loc, "", "[", "cooperative vector index out of range '%d'", index);
+            error(loc, "", "[", "cooperative vector index out of range '%lld'", (long long)index);
+            index = type.computeNumComponents() - 1;
+        }
+    } else if (type.isLongVector()) {
+        if (!type.hasSpecConstantVectorComponents() && index >= type.computeNumComponents()) {
+            error(loc, "", "[", "vector index out of range '%lld'", (long long)index);
             index = type.computeNumComponents() - 1;
         }
     }
@@ -537,6 +578,7 @@ void TParseContextBase::parseSwizzleSelector(const TSourceLoc& loc, const TStrin
         exyzw,
         ergba,
         estpq,
+        ebadswizzle,
     } fieldSet[MaxSwizzleSelectors];
 
     // Decode the swizzle string.
@@ -596,13 +638,19 @@ void TParseContextBase::parseSwizzleSelector(const TSourceLoc& loc, const TStrin
             break;
 
         default:
-            error(loc, "unknown swizzle selection", compString.c_str(), "");
+            fieldSet[i] = ebadswizzle;
             break;
         }
     }
 
     // Additional error checking.
     for (int i = 0; i < selector.size(); ++i) {
+        if (fieldSet[i] == ebadswizzle) {
+            error(loc, "unknown swizzle selection", compString.c_str(), "");
+            selector.resize(i);
+            break;
+        }
+
         if (selector[i] >= vecSize) {
             error(loc, "vector swizzle selection out of range",  compString.c_str(), "");
             selector.resize(i);
@@ -648,7 +696,7 @@ void TParseContextBase::growGlobalUniformBlock(const TSourceLoc& loc, TType& mem
         if (memberType != symbol->getType()) {
             TString err;
             err += "Redeclaration: already declared as \"" + symbol->getType().getCompleteString() + "\"";
-            error(loc, "", memberName.c_str(), err.c_str());
+            error(loc, "", memberName.c_str(), "%s", err.c_str());
         }
         return;
     }
@@ -692,14 +740,14 @@ void TParseContextBase::growAtomicCounterBlock(int binding, const TSourceLoc& lo
         TQualifier blockQualifier;
         blockQualifier.clear();
         blockQualifier.storage = EvqBuffer;
-        
+
         char charBuffer[512];
-        if (binding != TQualifier::layoutBindingEnd) {
+        if (binding != TQualifier::layoutNotSet) {
             snprintf(charBuffer, 512, "%s_%d", getAtomicCounterBlockName(), binding);
         } else {
             snprintf(charBuffer, 512, "%s_0", getAtomicCounterBlockName());
         }
-        
+
         TType blockType(new TTypeList, *NewPoolTString(charBuffer), blockQualifier);
         setUniformBlockDefaults(blockType);
         blockType.getQualifier().layoutPacking = ElpStd430;
@@ -763,8 +811,10 @@ void TParseContextBase::finish()
 
     // Transfer the linkage symbols to AST nodes, preserving order.
     TIntermAggregate* linkage = new TIntermAggregate;
-    for (auto i = linkageSymbols.begin(); i != linkageSymbols.end(); ++i)
+    for (auto i = linkageSymbols.begin(); i != linkageSymbols.end(); ++i) {
+        hideUnavailableMembers(**i);
         intermediate.addSymbolLinkageNode(linkage, **i);
+    }
     intermediate.addSymbolLinkageNodes(linkage, getLanguage(), symbolTable);
 }
 
